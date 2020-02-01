@@ -123,7 +123,7 @@ RUN apk update \
     && apk del build-deps \
     # Download Javinizer
     && wget -P /tmp ${javinizer_package_url} \
-    && unzip -d / /tmp/${javinizer_package} \
+    && unzip -d / /tmp/${javinizer_package}
 
 COPY install-pwsh-module.ps1 /Javinizer
 COPY start.ps1 /Javinizer
