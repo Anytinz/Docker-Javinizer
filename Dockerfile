@@ -105,8 +105,10 @@ LABEL maintainer="PowerShell Team <powershellteam@hotmail.com>" \
 ARG javinizer_version=1.1.10-branch-v1
 ARG javinizer_package=Javinizer.${javinizer_version}.zip
 ARG javinizer_package_url=https://github.com/anytinz/Javinizer/releases/download/${javinizer_version}/${javinizer_package}
+COPY install-pwsh-module.ps1 /tmp
 
-RUN apk update \
+RUN pwsh /tmp/install-pwsh-module.ps1 \
+    && apk update \
     && apk add --no-cache \
     python3-dev \
     jpeg-dev \
@@ -125,8 +127,5 @@ RUN apk update \
     && wget -P /tmp ${javinizer_package_url} \
     && unzip -d / /tmp/${javinizer_package}
 
-COPY install-pwsh-module.ps1 /Javinizer
 COPY start.ps1 /Javinizer
-RUN pwsh /Javinizer/install-pwsh-module.ps1
-
 ENTRYPOINT ["pwsh","/Javinizer/start.ps1"]
