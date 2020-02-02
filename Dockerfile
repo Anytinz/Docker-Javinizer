@@ -102,7 +102,7 @@ LABEL maintainer="PowerShell Team <powershellteam@hotmail.com>" \
     org.label-schema.docker.cmd.help="docker run ${IMAGE_NAME} pwsh -c Get-Help"
 
 # Anytinz's Mod
-ARG javinizer_version=1.1.10-branch
+ARG javinizer_version=1.1.10-branch-v1
 ARG javinizer_package=Javinizer.${javinizer_version}.zip
 ARG javinizer_package_url=https://github.com/anytinz/Javinizer/releases/download/${javinizer_version}/${javinizer_package}
 
