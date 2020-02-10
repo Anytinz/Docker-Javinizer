@@ -102,13 +102,10 @@ LABEL maintainer="PowerShell Team <powershellteam@hotmail.com>" \
     org.label-schema.docker.cmd.help="docker run ${IMAGE_NAME} pwsh -c Get-Help"
 
 # Anytinz's Mod
-ARG javinizer_version=1.1.10-branch-v1
-ARG javinizer_package=Javinizer.${javinizer_version}.zip
-ARG javinizer_package_url=https://github.com/anytinz/Javinizer/releases/download/${javinizer_version}/${javinizer_package}
-COPY install-pwsh-module.ps1 /tmp
+ARG javinizer_version=1.1.11-Chinese
+ARG javinizer_package_url=https://github.com/anytinz/Javinizer/releases/download/${javinizer_version}/Javinizer.zip
 
-RUN pwsh /tmp/install-pwsh-module.ps1 \
-    && apk update \
+RUN apk update \
     && apk add --no-cache \
     python3-dev \
     jpeg-dev \
@@ -125,7 +122,7 @@ RUN pwsh /tmp/install-pwsh-module.ps1 \
     && apk del build-deps \
     # Download Javinizer
     && wget -P /tmp ${javinizer_package_url} \
-    && unzip -d / /tmp/${javinizer_package}
+    && unzip -d / /tmp/Javinizer.zip
 
 COPY start.ps1 /Javinizer
 ENTRYPOINT ["pwsh","/Javinizer/start.ps1"]
