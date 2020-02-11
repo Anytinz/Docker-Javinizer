@@ -1,17 +1,21 @@
+param(
+    [String]$Interval ,
+    [String]$SetEmbyActorThumbs
+)
+
+Import-Module /Javinizer/Javinizer.psm1
+$env:PSModulePath
+
 if( Get-Module -ListAvailable PoshRSJob ) {
-    break
 }
 else {
     Install-Module -Force PoshRSJob
 }
 
-Import-Module /Javinizer/Javinizer.psm1
-$env:PSModulePath
-
 for( $i=1 ; $i -gt 0 ; $i++ ) {   
-    if( $SET_EMBY_ACTOR_THUMBS ) {
+    if( $SetEmbyActorThumbs -eq "Enable" ) {
         Javinizer -SetEmbyActorThumbs
     }
     Javinizer -Apply -Multi -Path /jav -DestinationPath /jav
-    Start-Sleep -s 300
+    Start-Sleep -s $Interval
 }
