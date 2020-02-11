@@ -122,7 +122,9 @@ RUN apk update \
     && apk del build-deps \
     # Download Javinizer
     && wget -P /tmp ${javinizer_package_url} \
-    && unzip -d / /tmp/Javinizer.zip
+    && unzip -d / /tmp/Javinizer.zip \
+    # Disable progress bar
+    && sed -i 's/ -ShowProgress / /g' /Javinizer/Private/Start-MultiSort.ps1
 
 COPY start.ps1 /Javinizer
 ENTRYPOINT ["pwsh","/Javinizer/start.ps1"]
