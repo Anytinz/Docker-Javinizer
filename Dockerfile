@@ -1,136 +1,148 @@
-# Copyright (c) Microsoft Corporation. All rights reserved.
-# Licensed under the MIT License.
+FROM mcr.microsoft.com/powershell:lts-alpine-3.10
 
-# Docker image file that describes an Alpine3.8 image with PowerShell installed from .tar.gz file(s)
+ENV PATH /usr/local/bin:$PATH
 
-# Define arg(s) needed for the From statement
-ARG fromTag=3.8
-ARG imageRepo=alpine
+# http://bugs.python.org/issue19846
+# > At the moment, setting "LANG=C" on a Linux system *fundamentally breaks Python 3*, and that's not OK.
+ENV LANG C.UTF-8
 
-FROM ${imageRepo}:${fromTag} AS installer-env
+# install ca-certificates so that HTTPS works consistently
+# other runtime dependencies for Python are installed later
+RUN apk add --no-cache ca-certificates
 
-# Define Args for the needed to add the package
-ARG PS_VERSION=6.2.0
-ARG PS_PACKAGE=powershell-${PS_VERSION}-linux-alpine-x64.tar.gz
-ARG PS_PACKAGE_URL=https://github.com/PowerShell/PowerShell/releases/download/v${PS_VERSION}/${PS_PACKAGE}
-ARG PS_INSTALL_VERSION=6
+ENV GPG_KEY E3FF2839C048B25C084DEBE9B26995E310250568
+ENV PYTHON_VERSION 3.9.0
 
-# define the folder we will be installing PowerShell to
-ENV PS_INSTALL_FOLDER=/opt/microsoft/powershell/$PS_INSTALL_VERSION
+RUN set -ex \
+	&& apk add --no-cache --virtual .fetch-deps \
+		gnupg \
+		tar \
+		xz \
+	\
+	&& wget -O python.tar.xz "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz" \
+	&& wget -O python.tar.xz.asc "https://www.python.org/ftp/python/${PYTHON_VERSION%%[a-z]*}/Python-$PYTHON_VERSION.tar.xz.asc" \
+	&& export GNUPGHOME="$(mktemp -d)" \
+	&& gpg --batch --keyserver ha.pool.sks-keyservers.net --recv-keys "$GPG_KEY" \
+	&& gpg --batch --verify python.tar.xz.asc python.tar.xz \
+	&& { command -v gpgconf > /dev/null && gpgconf --kill all || :; } \
+	&& rm -rf "$GNUPGHOME" python.tar.xz.asc \
+	&& mkdir -p /usr/src/python \
+	&& tar -xJC /usr/src/python --strip-components=1 -f python.tar.xz \
+	&& rm python.tar.xz \
+	\
+	&& apk add --no-cache --virtual .build-deps  \
+		bluez-dev \
+		bzip2-dev \
+		coreutils \
+		dpkg-dev dpkg \
+		expat-dev \
+		findutils \
+		gcc \
+		gdbm-dev \
+		libc-dev \
+		libffi-dev \
+		libnsl-dev \
+		libtirpc-dev \
+		linux-headers \
+		make \
+		ncurses-dev \
+		openssl-dev \
+		pax-utils \
+		readline-dev \
+		sqlite-dev \
+		tcl-dev \
+		tk \
+		tk-dev \
+		util-linux-dev \
+		xz-dev \
+		zlib-dev \
+# add build deps before removing fetch deps in case there's overlap
+	&& apk del --no-network .fetch-deps \
+	\
+	&& cd /usr/src/python \
+	&& gnuArch="$(dpkg-architecture --query DEB_BUILD_GNU_TYPE)" \
+	&& ./configure \
+		--build="$gnuArch" \
+		--enable-loadable-sqlite-extensions \
+		--enable-optimizations \
+		--enable-option-checking=fatal \
+		--enable-shared \
+		--with-system-expat \
+		--with-system-ffi \
+		--without-ensurepip \
+	&& make -j "$(nproc)" \
+# set thread stack size to 1MB so we don't segfault before we hit sys.getrecursionlimit()
+# https://github.com/alpinelinux/aports/commit/2026e1259422d4e0cf92391ca2d3844356c649d0
+		EXTRA_CFLAGS="-DTHREAD_STACK_SIZE=0x100000" \
+		LDFLAGS="-Wl,--strip-all" \
+	&& make install \
+	&& rm -rf /usr/src/python \
+	\
+	&& find /usr/local -depth \
+		\( \
+			\( -type d -a \( -name test -o -name tests -o -name idle_test \) \) \
+			-o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' -o -name '*.a' \) \) \
+		\) -exec rm -rf '{}' + \
+	\
+	&& find /usr/local -type f -executable -not \( -name '*tkinter*' \) -exec scanelf --needed --nobanner --format '%n#p' '{}' ';' \
+		| tr ',' '\n' \
+		| sort -u \
+		| awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }' \
+		| xargs -rt apk add --no-cache --virtual .python-rundeps \
+	&& apk del --no-network .build-deps \
+	\
+	&& python3 --version
 
-# Download the Linux tar.gz and save it
-# Create the install folder
-# Unzip the Linux tar.gz
-RUN wget -O /tmp/linux.tar.gz ${PS_PACKAGE_URL} \
-    && mkdir -p ${PS_INSTALL_FOLDER} \
-    && tar zxf /tmp/linux.tar.gz -C ${PS_INSTALL_FOLDER} -v
+# make some useful symlinks that are expected to exist
+RUN cd /usr/local/bin \
+	&& ln -s idle3 idle \
+	&& ln -s pydoc3 pydoc \
+	&& ln -s python3 python \
+	&& ln -s python3-config python-config
 
-# Start a new stage so we lose all the tar.gz layers from the final image
-FROM ${imageRepo}:${fromTag}
+# if this is called "PIP_VERSION", pip explodes with "ValueError: invalid truth value '<VERSION>'"
+ENV PYTHON_PIP_VERSION 20.2.3
+# https://github.com/pypa/get-pip
+ENV PYTHON_GET_PIP_URL https://github.com/pypa/get-pip/raw/fa7dc83944936bf09a0e4cb5d5ec852c0d256599/get-pip.py
+ENV PYTHON_GET_PIP_SHA256 6e0bb0a2c2533361d7f297ed547237caf1b7507f197835974c0dd7eba998c53c
 
-# Copy only the files we need from the previous stage
-COPY --from=installer-env ["/opt/microsoft/powershell", "/opt/microsoft/powershell"]
+RUN set -ex; \
+	\
+	wget -O get-pip.py "$PYTHON_GET_PIP_URL"; \
+	echo "$PYTHON_GET_PIP_SHA256 *get-pip.py" | sha256sum -c -; \
+	\
+	python get-pip.py \
+		--disable-pip-version-check \
+		--no-cache-dir \
+		"pip==$PYTHON_PIP_VERSION" \
+	; \
+	pip --version; \
+	\
+	find /usr/local -depth \
+		\( \
+			\( -type d -a \( -name test -o -name tests -o -name idle_test \) \) \
+			-o \
+			\( -type f -a \( -name '*.pyc' -o -name '*.pyo' \) \) \
+		\) -exec rm -rf '{}' +; \
+	rm -f get-pip.py
 
-# Define Args and Env needed to create links
-ARG PS_INSTALL_VERSION=6
-ENV PS_INSTALL_FOLDER=/opt/microsoft/powershell/$PS_INSTALL_VERSION \
-    \
-    # Define ENVs for Localization/Globalization
-    DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
-    LC_ALL=en_US.UTF-8 \
-    LANG=en_US.UTF-8 \
-    # set a fixed location for the Module analysis cache
-    PSModuleAnalysisCachePath=/var/cache/microsoft/powershell/PSModuleAnalysisCache/ModuleAnalysisCache
-
-# Install dotnet dependencies and ca-certificates
-RUN apk add --no-cache \
-    ca-certificates \
-    less \
-    \
-    # PSReadline/console dependencies
-    ncurses-terminfo-base \
-    \
-    # .NET Core dependencies
-    krb5-libs \
-    libgcc \
-    libintl \
-    libssl1.0 \
-    libstdc++ \
-    tzdata \
-    userspace-rcu \
-    zlib \
-    icu-libs \
-    && apk -X https://dl-cdn.alpinelinux.org/alpine/edge/main add --no-cache \
-    lttng-ust \
-    \
-    # Create the pwsh symbolic link that points to powershell
-    && ln -s ${PS_INSTALL_FOLDER}/pwsh /usr/bin/pwsh \
-    # Give all user execute permissions and remove write permissions for others
-    && chmod a+x,o-w ${PS_INSTALL_FOLDER}/pwsh \
-    # intialize powershell module cache
-    && pwsh \
-        -NoLogo \
-        -NoProfile \
-        -Command " \
-          \$ErrorActionPreference = 'Stop' ; \
-          \$ProgressPreference = 'SilentlyContinue' ; \
-          while(!(Test-Path -Path \$env:PSModuleAnalysisCachePath)) {  \
-            Write-Host "'Waiting for $env:PSModuleAnalysisCachePath'" ; \
-            Start-Sleep -Seconds 6 ; \
-          }"
-
-# Define args needed only for the labels
-ARG PS_VERSION=6.2.0
-ARG IMAGE_NAME=mcr.microsoft.com/powershell:alpine-3.8
-ARG VCS_REF="none"
-
-# Add label last as it's just metadata and uses a lot of parameters
-LABEL maintainer="PowerShell Team <powershellteam@hotmail.com>" \
-    readme.md="https://github.com/PowerShell/PowerShell/blob/master/docker/README.md" \
-    description="This Dockerfile will install the latest release of PowerShell." \
-    org.label-schema.usage="https://github.com/PowerShell/PowerShell/tree/master/docker#run-the-docker-image-you-built" \
-    org.label-schema.url="https://github.com/PowerShell/PowerShell/blob/master/docker/README.md" \
-    org.label-schema.vcs-url="https://github.com/PowerShell/PowerShell-Docker" \
-    org.label-schema.name="powershell" \
-    org.label-schema.vendor="PowerShell" \
-    org.label-schema.vcs-ref=${VCS_REF} \
-    org.label-schema.version=${PS_VERSION} \
-    org.label-schema.schema-version="1.0" \
-    org.label-schema.docker.cmd="docker run ${IMAGE_NAME} pwsh -c '$psversiontable'" \
-    org.label-schema.docker.cmd.devel="docker run ${IMAGE_NAME}" \
-    org.label-schema.docker.cmd.test="docker run ${IMAGE_NAME} pwsh -c Invoke-Pester" \
-    org.label-schema.docker.cmd.help="docker run ${IMAGE_NAME} pwsh -c Get-Help"
-
-# Anytinz's Mod
-ARG javinizer_version=1.1.11-Chinese
-ARG javinizer_package_url=https://github.com/anytinz/Javinizer/releases/download/${javinizer_version}/Javinizer.zip
+ARG javinizer_version=2.1.2
+ARG javinizer_package_url=https://github.com/jvlflame/Javinizer/releases/download/${javinizer_version}/Javinizer.${javinizer_version}.zip
 
 RUN apk update \
     && apk add --no-cache \
-    python3-dev \
     jpeg-dev \
     zlib-dev \
-    bash \
     # build-deps
-    && apk add --no-cache --virtual build-deps \
-    build-base \
-    linux-headers \
+    && apk add --no-cache --virtual build-deps build-base linux-headers \
     # Install Python module dependencies
-    && pip3 install --no-cache-dir --upgrade pip \
-    && pip3 install --no-cache-dir pillow cloudscraper googletrans \ 
+    && pip install --no-cache-dir pillow googletrans \ 
     # Delete cache
     && apk del build-deps \
     # Download Javinizer
     && wget -P /tmp ${javinizer_package_url} \
-    && unzip -d / /tmp/Javinizer.zip \
-    # Disable progress bar
-    && sed -i 's/ -ShowProgress / /g' /Javinizer/Private/Start-MultiSort.ps1
+    && unzip -d / /tmp/Javinizer.${javinizer_version}.zip
 
 COPY start.ps1 /Javinizer
 
-ENV Interval=300 \
-    SetEmbyActorThumbs=Disable
-
-ENTRYPOINT pwsh /Javinizer/start.ps1 \
-    -Interval $Interval \
-    -SetEmbyActorThumbs $SetEmbyActorThumbs
+ENTRYPOINT pwsh /Javinizer/start.ps1
