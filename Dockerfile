@@ -145,4 +145,9 @@ RUN apk update \
 
 COPY start.ps1 /Javinizer
 
-ENTRYPOINT pwsh /Javinizer/start.ps1
+ENV Interval=300 \
+    SetEmbyThumbs=Disable
+
+ENTRYPOINT pwsh /Javinizer/start.ps1 \
+    -Interval $Interval \
+    -SetEmbyThumbs $SetEmbyThumbs
